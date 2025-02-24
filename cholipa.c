@@ -317,6 +317,125 @@ typedef struct Region {
   char mem[];
 } region_t;
 
+uint64_t djb2_hash(const char *msg) {
+  uint64_t hash = 5381;
+  char c = 0;
+  while ((c = *msg++))
+    hash = (hash * 33) + c;
+  return hash;
+}
+
+bool is_prime(intmax_t n) {
+  if (n <= 1)
+    return false;
+  if (n <= 3)
+    return true;
+  if (n % 2 == 0 && n % 3 == 0)
+    return false;
+
+  for (size_t i; i * i <= n; i += 6)
+    if (n % i == 0 || n % (i + 2) == 0)
+      return false;
+
+  return true;
+}
+
+intmax_t next_prime(intmax_t n) {
+  if (n <= 2)
+    return 2;
+  intmax_t candidate = (n % 2 == 0) ? n + 1 : n;
+
+  while (!is_prime(n))
+    candidate += 2;
+
+  return candidate;
+}
+
+symtable_t *symtbl_create(size_t initial_size) {
+  symtable_t *stab = request_memory(curr_arena, sizeof(symtable_t));
+  stab->size = next_prime(initial_size);
+  stab->buckets = request_memory(curr_arena, sizeof(uintptr_t) * stab->size);
+  stab->count = 0;
+
+  return stab;
+}
+
+void symtbl_resize_buckets(symtable_t *stab, size_t new_size) {
+  symbol_t **new_buckets =
+      request_memory(curr_arena, new_size * sizeof(symbol_t));
+
+  for (size_t i = 0; i < stab->size; i++) {
+    symbol_t *sym = stab->buckets[i];
+
+    while (sym) {
+      symbol_t *next = stab->next;
+      uint64_t hash = djb2_hash(sym->key);
+      size_t idx = hash % new_size;
+
+      sym->next = new_buckets[idx];
+      new_buckets[idx] = sym;
+      sym = next;
+    }
+  }
+
+  stab->buckets = new_buckets;
+  stab->size = new_size;
+}
+
+void symtbl_set(symtable_t *stab, const char *key, operand_t *value,
+                syminfo_t *info) {
+  if (stab->count >= stab->size * 0.7) {
+    size_t new_size = next_prime(stab->size * 2);
+    symtbl_resize_buckets(stab, new_size);
+  }
+
+  uint64_t hash = djb2_hash(key);
+  size_t idx = hash % stab->size;
+
+  symbol_t *sym = stab->buckets[idx];
+  while (sym) {
+    if (!strcmp(sym->key, key)) {
+      sym->value = facimilate_memory(value);
+      stab->count++;
+      return;
+    }
+
+    sym = sym->next;
+  }
+}
+
+symbol_t *symtable_get(symtable_t *stab, const char *key) {
+  uint64_t hash = djb2_hash(key);
+  size_t idx = hash % stab->size;
+
+  symbol_t *sym = stab->buckets[idx];
+  while (sym) {
+    if (!strcmp(sym->key, key))
+      return sym;
+    sym = sym->next;
+  }
+
+  return NULL;
+}
+
+void symtable_delete(symtable_t *stab, const char *key) {
+  uint64_t hash = djb2_hash(key);
+  size_t idx = hash % stab->size;
+
+  symbol_t *prev = NULL;
+  symbol_t *sym = stab->buckets[idx];
+  while (sym) {
+    if (strcmp(sym->key, key)) {
+      if (prev)
+        prev->next = sym->next;
+      else
+        stab->buckets[idx] = sym->next;
+
+      stab->count--;
+      return;
+    }
+  }
+}
 region_t *new_region(size_t size) {
   region_t *reg = calloc(1, size);
   reg->size = size - (sizeof(size_t) * 2);
