@@ -9,6 +9,7 @@
 #define INIT_STACK_SIZE 65536
 #define MAX_AST_CHILD 128
 #define MAX_ID_LENGTH 64
+#define BUF_GROWTH_RATE 128
 
 #define RAISE(msg, ...)                                                        \
   do {                                                                         \
@@ -29,6 +30,8 @@ typedef enum {
   OP_LOAD_INT,
   OP_LOAD_REAL,
   OP_LOAD_STRING,
+  OP_LOAD_CLOSURE,
+  OP_LOAD_INTRIN,
 
   OP_NEGATE,
   OP_BITNOT,
@@ -81,9 +84,9 @@ typedef enum {
 } code_t;
 
 struct ByteBuffer {
-  byte_buf_t bytes;
-  size_t num_bytes;
-  size_t cursor;
+  uint8_t *bytes;
+  size_t capcity;
+  size_t length;
 };
 
 struct Operand {
@@ -103,13 +106,12 @@ struct Operand {
     intrin_t *v_intrin;
   };
 
-  struct Operand *next;
-  struct Operand *prev;
-  ssize_t num_refs;
+  operand_t *next;
+  operand_t *prev;
 };
 
 typedef struct Symbol {
-  const char *name;
+  const byte_buf_t *name;
   operand_t *value;
   syminfo_t *info;
   struct Symbol *next;
@@ -127,7 +129,7 @@ typedef struct Environ {
 } environ_t;
 
 typedef struct Variable {
-  const char *name;
+  const byte_buf_t *name;
   operand_t *value;
 } variable_t;
 
@@ -137,11 +139,22 @@ typedef struct Upvalue {
   struct Upvalue *next;
 } upval_t;
 
-typedef struct Function {
-  const char *name;
-  const char **params;
+typedef struct Closure {
+  environ_t *env;
+  upval_t *captured;
+  const byte_buf_t **params;
   size_t num_params;
   ast_node_t *body;
+  const interp_t *interp;
+} closure_t;
+
+typedef struct Function {
+  const byte_buf_t *name;
+  const byte_buf_t **params;
+  size_t num_params;
+  ast_node_t *body;
+  environ_t *env;
+  const interp_t *interp;
 } function_t;
 
 typedef struct UnaryOp {
@@ -180,30 +193,30 @@ typedef struct BinaryOp {
 } binaryop_t;
 
 typedef struct Label {
-  const char *name;
+  const byte_buf_t *name;
   size_t line_no;
 } label_t;
 
 typedef struct AssignVal {
-  const char **rhs;
+  const byte_buf_t **rhs;
   size_t num_rhs;
   ast_node_t **lhs;
   size_t num_lhs;
 } assign_t;
 
 typedef struct DeclareVal {
-  const char **vars;
+  const byte_buf_t **vars;
   size_t num_vars;
 } decl_t;
 
 typedef struct Closure {
-  const char **params;
+  const byte_buf_t **params;
   size_t num_params;
   ast_node_t *body;
 } closure_t;
 
 typedef struct Call {
-  const char *prefix_name;
+  const byte_buf_t *prefix_name;
   const ast_node_t **arguments;
   size_t num_args;
   bool is_tail;
@@ -306,7 +319,7 @@ struct AST {
     intmax_t v_integer;
     long double v_real;
     const char v_identifier[MAX_ID_LENGTH + 1];
-    const byte_buf_t v_string;
+    const byte_buf_t *v_string;
   };
 
   tag_t tag;
@@ -327,7 +340,7 @@ typedef struct Region {
   char mem[];
 } region_t;
 
-uint64_t djb2_hash(const char *msg) {
+uint64_t djb2_hash(const byte_buf_t *msg) {
   uint64_t hash = 5381;
   char c = 0;
   while ((c = *msg++))
@@ -458,6 +471,9 @@ region_t *new_region(size_t size) {
 }
 
 void *request_memory(region_t *reg, size_t size) {
+  if (reg == NULL)
+    RAISE("Region is not allocated", NULL);
+
   if (reg->size - reg->used < size) {
     region_t *follow = new_region(reg->size);
     region_t *last = reg;
@@ -475,6 +491,9 @@ void *request_memory(region_t *reg, size_t size) {
 }
 
 void destroy_region_chain(region_t *head) {
+  if (head == NULL)
+    return;
+
   region_t *last = head;
 
   while (last) {
@@ -530,7 +549,7 @@ ast_node_t *ast_create_unaryop(ast_node_t *absyn, enum UnaryOperator operator,
   return new_unop;
 }
 
-ast_node_t *ast_create_label(ast_node_t *absyn, const char *name,
+ast_node_t *ast_create_label(ast_node_t *absyn, const byte_buf_t *name,
                              size_t line_no) {
   ast_node_t *new_label = request_memory(curr_arena, sizeof(ast_node_t));
 
@@ -544,8 +563,8 @@ ast_node_t *ast_create_label(ast_node_t *absyn, const char *name,
   return new_label;
 }
 
-ast_node_t *ast_create_function(ast_node_t *absyn, const char *name,
-                                const char **params, size_t num_params,
+ast_node_t *ast_create_function(ast_node_t *absyn, const byte_buf_t *name,
+                                const byte_buf_t **params, size_t num_params,
                                 ast_node_t *body) {
   ast_node_t *new_function = request_memory(curr_arena, sizeof(ast_node_t));
 
@@ -626,7 +645,7 @@ ast_node_t *ast_create_loop(ast_node_t *absyn, enum LoopKind kind,
   return new_loop;
 }
 
-ast_node_t *ast_create_call(ast_node_t *absyn, const char *prefix_name,
+ast_node_t *ast_create_call(ast_node_t *absyn, const byte_buf_t *prefix_name,
                             const ast_node_t **arguments, size_t num_args,
                             bool is_tail) {
   ast_node_t *new_call = request_memory(curr_arena, sizeof(ast_node_t));
@@ -643,7 +662,7 @@ ast_node_t *ast_create_call(ast_node_t *absyn, const char *prefix_name,
   return new_call;
 }
 
-ast_node_t *ast_create_declare(ast_node_t *absyn, const char **vars,
+ast_node_t *ast_create_declare(ast_node_t *absyn, const byte_buf_t **vars,
                                size_t num_vars) {
   ast_node_t *new_declare = request_memory(curr_arena, sizeof(ast_node_t));
 
@@ -657,7 +676,7 @@ ast_node_t *ast_create_declare(ast_node_t *absyn, const char **vars,
   return new_declare;
 }
 
-ast_node_t *ast_create_assign(ast_node_t *absyn, const char **rhs,
+ast_node_t *ast_create_assign(ast_node_t *absyn, const byte_buf_t **rhs,
                               size_t num_rhs, ast_node_t **lhs,
                               size_t num_lhs) {
   ast_node_t *new_assign = request_memory(curr_arena, sizeof(ast_node_t));
@@ -726,4 +745,108 @@ void ast_append_leaf(ast_node_t *absyn, ast_node_t *new_leaf) {
   }
 
   new_leaf->visited = false;
+}
+
+operand_t *operand_new_integer(intmax_t value) {
+  operand_t *op = request_memory(curr_arena, sizeof(operand_t));
+  op->type = OPR_Integer;
+  op->v_integer = value;
+  op->next = op->prev = NULL;
+
+  return op;
+}
+
+operand_t *operand_new_real(long double value) {
+  operand_t *op = request_memory(curr_arena, sizeof(operand_t));
+  op->type = OPR_Real;
+  op->v_real = value;
+  op->next = op->prev = NULL;
+
+  return op;
+}
+
+operand_t *operand_new_string(const byte_buf_t *value) {
+  operand_t *op = request_memory(curr_arena, sizeof(operand_t));
+  op->type = OPR_String;
+  op->v_string = *value;
+  op->next = op->prev = NULL;
+
+  return op;
+}
+
+operand_t *operand_new_closure(closure_t *closure) {
+  operand_t *op = request_memory(curr_arena, sizeof(operand_t));
+  op->type = OPR_Closure;
+  op->v_closure = closure;
+  op->next = op->prev = NULL;
+
+  return op;
+}
+
+operand_t *operand_new_intrin(intrin_t *intrin) {
+  operand_t *op = request_memory(curr_arena, sizeof(operand_t));
+  op->type = OPR_Intrin;
+  op->v_intrin = intrin;
+  op->next = op->prev = NULL;
+
+  return op;
+}
+
+void operand_append(operand_t *current, operand_t *new_node) {
+  if (!current || !new_node)
+    return;
+
+  new_node->prev = current;
+  new_node->next = current->next;
+  if (current->next) {
+    current->next->prev = new_node;
+  }
+  current->next = new_node;
+}
+
+void operand_prepend(operand_t *current, operand_t *new_node) {
+  if (!current || !new_node)
+    return;
+
+  new_node->next = current;
+  new_node->prev = current->prev;
+  if (current->prev) {
+    current->prev->next = new_node;
+  }
+  current->prev = new_node;
+}
+
+byte_buf_t *byte_buf_new(const uint8_t *str, size_t length) {
+  byte_buf_t *buf = request_memory(curr_arena, sizeof(byte_buf_t));
+  buf->bytes = request_memory(curr_arena, length * 2);
+  memmove(buf->bytes, str, length);
+  buf->length = length;
+  buf->capacity = to_nearest_power_of_two(length);
+
+  return buf;
+}
+
+byte_buf_t *byte_buf_grow(byte_buf_t *buf, size_t min_growth) {
+  if (buf == NULL)
+    return NULL;
+
+  size_t growth_size =
+      to_nearest_power_of_two(buf->capacity + min_growth + BUF_GROWTH_RATE);
+  uint8_t *new_buf = request_memory(curr_arena, growth_size);
+
+  memmove(new_buf, buf->bytes, buf->size);
+  buf->bytes = new_buf;
+  buf->capacity = growth_size;
+
+  return buf;
+}
+
+byte_buf_t *byte_buf_concat(byte_buf_t *buf, byte_buf_t *to_cat) {
+  if (to_cat->length > buf->capacity - buf->length)
+    buf = byte_buf_grow(to_cat->length);
+
+  memmove(&buf->bytes[buf->length], to_cat->bytes, to_cat->length);
+  buf->length += to_cat->length;
+
+  return buf;
 }
