@@ -1,3 +1,4 @@
+#include <limits.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -18,12 +19,8 @@
     exit(EXIT_FAILURE);                                                        \
   } while (0)
 
-typedef struct ByteBuffer byte_buf_t;
 typedef struct Operand operand_t;
 typedef struct AST ast_node_t;
-typedef struct Closure closure_t;
-typedef struct Intrin intrin_t;
-typedef struct Environ environ_t;
 typedef uint32_t tag_t;
 
 typedef enum {
@@ -83,11 +80,17 @@ typedef enum {
   OP_HALT,
 } code_t;
 
-struct ByteBuffer {
+typedef struct SourceLoc {
+  size_t line;
+  size_t column;
+  const char file_name[PATH_MAX + 1];
+} src_loc_t;
+
+typedef struct ByteBuffer {
   uint8_t *bytes;
   size_t capcity;
   size_t length;
-};
+} byte_buf_t;
 
 struct Operand {
   enum OperandType {
@@ -96,16 +99,19 @@ struct Operand {
     OPR_String,
     OPR_Closure,
     OPR_Intrin,
+    OPR_Regexp,
   } type;
 
   union {
     intmax_t v_integer;
     long double v_real;
-    const byte_buf_t v_string;
+    byte_buf_t *v_string;
     closure_t *v_closure;
     intrin_t *v_intrin;
+    regexp_t *v_regexp;
   };
 
+  src_loc_t *loc_info;
   operand_t *next;
   operand_t *prev;
 };
@@ -113,7 +119,6 @@ struct Operand {
 typedef struct Symbol {
   const byte_buf_t *name;
   operand_t *value;
-  syminfo_t *info;
   struct Symbol *next;
 } symbol_t;
 
@@ -131,31 +136,23 @@ typedef struct Environ {
 typedef struct Variable {
   const byte_buf_t *name;
   operand_t *value;
-} variable_t;
+  bool is_captured;
+} var_box_t;
 
 typedef struct Upvalue {
-  Variable *on_stack;
+  var_box_t *on_stack;
+  var_box_t *on_heap;
   bool is_closed;
   struct Upvalue *next;
 } upval_t;
 
-typedef struct Closure {
-  environ_t *env;
-  upval_t *captured;
-  const byte_buf_t **params;
-  size_t num_params;
-  ast_node_t *body;
-  const interp_t *interp;
-} closure_t;
-
 typedef struct Function {
   const byte_buf_t *name;
-  const byte_buf_t **params;
+  byte_buf_t **params;
   size_t num_params;
   ast_node_t *body;
-  environ_t *env;
-  const interp_t *interp;
-} function_t;
+  bool is_closure;
+} function_t, closure_t;
 
 typedef struct UnaryOp {
   enum UnaryOperator {
@@ -208,12 +205,6 @@ typedef struct DeclareVal {
   const byte_buf_t **vars;
   size_t num_vars;
 } decl_t;
-
-typedef struct Closure {
-  const byte_buf_t **params;
-  size_t num_params;
-  ast_node_t *body;
-} closure_t;
 
 typedef struct Call {
   const byte_buf_t *prefix_name;
@@ -313,7 +304,7 @@ struct AST {
     binaryop_t *v_binop;
     unaryop_t *v_unrop;
     assign_t *v_assign;
-    decl_t *v_delcl;
+    decl_t *v_decl;
     relop_t *v_relop;
     size_t v_index;
     intmax_t v_integer;
