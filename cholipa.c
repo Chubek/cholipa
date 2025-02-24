@@ -22,6 +22,9 @@
 typedef struct Operand operand_t;
 typedef struct AST ast_node_t;
 typedef uint32_t tag_t;
+typedef struct Region region_t;
+
+static region_t *curr_env = NULL;
 
 typedef enum {
   OP_LOAD_INT,
@@ -79,6 +82,10 @@ typedef enum {
 
   OP_HALT,
 } code_t;
+
+typedef struct Intrin {
+  int s; // PLACEHOLDER TODO
+} intrin_t;
 
 typedef struct SourceLoc {
   size_t line;
@@ -309,7 +316,7 @@ struct AST {
     size_t v_index;
     intmax_t v_integer;
     long double v_real;
-    const char v_identifier[MAX_ID_LENGTH + 1];
+    const byte_buf_t *v_identifier;
     const byte_buf_t *v_string;
   };
 
@@ -319,17 +326,17 @@ struct AST {
   const struct AST *prev;
 };
 
-struct Closure {
-  size_t address;
-  environ_t *env;
-};
+typedef struct Box {
+  void *data;
+  size_t size;
+} box_t;
 
-typedef struct Region {
+struct Region {
   size_t size;
   size_t used;
   struct Region *next;
   char mem[];
-} region_t;
+};
 
 uint64_t djb2_hash(const byte_buf_t *msg) {
   uint64_t hash = 5381;
@@ -556,7 +563,7 @@ ast_node_t *ast_create_label(ast_node_t *absyn, const byte_buf_t *name,
 
 ast_node_t *ast_create_function(ast_node_t *absyn, const byte_buf_t *name,
                                 const byte_buf_t **params, size_t num_params,
-                                ast_node_t *body) {
+                                ast_node_t *body, bool is_closure) {
   ast_node_t *new_function = request_memory(curr_arena, sizeof(ast_node_t));
 
   new_function->kind = LEAF_Function;
@@ -565,6 +572,7 @@ ast_node_t *ast_create_function(ast_node_t *absyn, const byte_buf_t *name,
   new_function->v_function->params = params;
   new_function->v_function->num_params = num_params;
   new_function->v_function->body = body;
+  new_function->v_function->is_closure = is_closure;
 
   ast_append_leaf(absyn, new_function);
 
@@ -706,17 +714,6 @@ ast_node_t *ast_create_real(ast_node_t *absyn, long double value) {
   return new_real;
 }
 
-ast_node_t *ast_create_real(ast_node_t *absyn, long double value) {
-  ast_node_t *new_real = request_memory(curr_arena, sizeof(ast_node_t));
-
-  new_real->kind = LEAF_Real;
-  new_real->v_real = value;
-
-  ast_append_leaf(absyn, new_real);
-
-  return new_real;
-}
-
 void ast_append_leaf(ast_node_t *absyn, ast_node_t *new_leaf) {
   if (absyn == NULL) {
     return;
@@ -807,6 +804,19 @@ void operand_prepend(operand_t *current, operand_t *new_node) {
   current->prev = new_node;
 }
 
+uintmax_t to_nearest_power_of_two(uintmax_t number) {
+  number--;
+  number |= number >> 1;
+  number |= number >> 2;
+  number |= number >> 4;
+  number |= number >> 8;
+  number |= number >> 16;
+  number |= number >> 32;
+  number |= number >> 64;
+
+  return ++number;
+}
+
 byte_buf_t *byte_buf_new(const uint8_t *str, size_t length) {
   byte_buf_t *buf = request_memory(curr_arena, sizeof(byte_buf_t));
   buf->bytes = request_memory(curr_arena, length * 2);
@@ -817,17 +827,14 @@ byte_buf_t *byte_buf_new(const uint8_t *str, size_t length) {
   return buf;
 }
 
-uintmax_t to_nearest_power_of_two(uintmax_t number) {
-      number--;
-      number |= number >> 1;
-      number |= number >> 2;      
-      number |= number >> 4;
-      number |= number >> 8;
-      number |= number >> 16;
-      number |= number >> 32;
-      number |= number >> 64;
+byte_buf_t *byte_buf_new(const uint8_t *str, size_t length) {
+  byte_buf_t *buf = request_memory(curr_arena, sizeof(byte_buf_t));
+  buf->bytes = request_memory(curr_arena, length * 2);
+  memmove(buf->bytes, str, length);
+  buf->length = length;
+  buf->capacity = to_nearest_power_of_two(length);
 
-      return ++number;
+  return buf;
 }
 
 byte_buf_t *byte_buf_grow(byte_buf_t *buf, size_t min_growth) {
@@ -853,4 +860,22 @@ byte_buf_t *byte_buf_concat(byte_buf_t *buf, byte_buf_t *to_cat) {
   buf->length += to_cat->length;
 
   return buf;
+}
+
+box_t *box_create(const void *data, size_t size) {
+  box_t *box = request_memory(curr_arena, sizeof(box_t));
+  box->data = duplicate_memory(box->data, size);
+  box->size = size;
+
+  return box;
+}
+
+void *box_get(const box_t *box) { return box->data; }
+
+void box_set(box_t *box, const void *new_data, size_t new_size) {
+  if (new_size != box->size) {
+    box->data = resize_memory(box->data, box->size, new_size);
+  }
+
+  memmove(box->data, new_data, new_size);
 }
