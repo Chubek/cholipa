@@ -17,6 +17,7 @@
     exit(EXIT_FAILURE);                                                        \
   } while (0)
 
+typedef struct ByteBuffer byte_buf_t;
 typedef struct Operand operand_t;
 typedef struct AST ast_node_t;
 typedef struct Closure closure_t;
@@ -79,6 +80,12 @@ typedef enum {
   OP_HALT,
 } code_t;
 
+struct ByteBuffer {
+  byte_buf_t bytes;
+  size_t num_bytes;
+  size_t cursor;
+};
+
 struct Operand {
   enum OperandType {
     OPR_Integer,
@@ -91,11 +98,13 @@ struct Operand {
   union {
     intmax_t v_integer;
     long double v_real;
-    const uint8_t *v_string;
+    const byte_buf_t v_string;
     closure_t *v_closure;
     intrin_t *v_intrin;
   };
 
+  struct Operand *next;
+  struct Operand *prev;
   ssize_t num_refs;
 };
 
@@ -107,7 +116,7 @@ typedef struct Symbol {
 } symbol_t;
 
 typedef struct Symtable {
-  Symbol **buckets;
+  symbol_t **buckets;
   size_t size;
   size_t count;
 } symtable_t;
@@ -297,7 +306,7 @@ struct AST {
     intmax_t v_integer;
     long double v_real;
     const char v_identifier[MAX_ID_LENGTH + 1];
-    const uint8_t *v_string;
+    const byte_buf_t v_string;
   };
 
   tag_t tag;
@@ -362,7 +371,7 @@ symtable_t *symtbl_create(size_t initial_size) {
 }
 
 void symtbl_resize_buckets(symtable_t *stab, size_t new_size) {
-  symbol_t **new_buckets =
+  symbol_t *new_buckets =
       request_memory(curr_arena, new_size * sizeof(symbol_t));
 
   for (size_t i = 0; i < stab->size; i++) {
@@ -383,7 +392,7 @@ void symtbl_resize_buckets(symtable_t *stab, size_t new_size) {
   stab->size = new_size;
 }
 
-void symtbl_set(symtable_t *stab, const char *key, operand_t *value,
+void symtbl_set(symtable_t *stab, const byte_buf_t *key, operand_t *value,
                 syminfo_t *info) {
   if (stab->count >= stab->size * 0.7) {
     size_t new_size = next_prime(stab->size * 2);
@@ -405,7 +414,7 @@ void symtbl_set(symtable_t *stab, const char *key, operand_t *value,
   }
 }
 
-symbol_t *symtable_get(symtable_t *stab, const char *key) {
+symbol_t *symtable_get(symtable_t *stab, const byte_buf_t *key) {
   uint64_t hash = djb2_hash(key);
   size_t idx = hash % stab->size;
 
@@ -419,14 +428,14 @@ symbol_t *symtable_get(symtable_t *stab, const char *key) {
   return NULL;
 }
 
-void symtable_delete(symtable_t *stab, const char *key) {
+void symtable_delete(symtable_t *stab, const byte_buf_t *key) {
   uint64_t hash = djb2_hash(key);
   size_t idx = hash % stab->size;
 
   symbol_t *prev = NULL;
   symbol_t *sym = stab->buckets[idx];
   while (sym) {
-    if (strcmp(sym->key, key)) {
+    if (!strcmp(sym->key, key)) {
       if (prev)
         prev->next = sym->next;
       else
@@ -435,6 +444,9 @@ void symtable_delete(symtable_t *stab, const char *key) {
       stab->count--;
       return;
     }
+
+    prev = sym;
+    sym = prev->next;
   }
 }
 region_t *new_region(size_t size) {
