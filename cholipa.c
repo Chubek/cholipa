@@ -817,6 +817,19 @@ byte_buf_t *byte_buf_new(const uint8_t *str, size_t length) {
   return buf;
 }
 
+uintmax_t to_nearest_power_of_two(uintmax_t number) {
+      number--;
+      number |= number >> 1;
+      number |= number >> 2;      
+      number |= number >> 4;
+      number |= number >> 8;
+      number |= number >> 16;
+      number |= number >> 32;
+      number |= number >> 64;
+
+      return ++number;
+}
+
 byte_buf_t *byte_buf_grow(byte_buf_t *buf, size_t min_growth) {
   if (buf == NULL)
     return NULL;
