@@ -22,54 +22,53 @@ typedef struct AST ast_node_t;
 typedef uint32_t tag_t;
 
 typedef enum {
-    OP_LOAD_INT = 0x01,    
-    OP_LOAD_REAL = 0x02,   
-    OP_LOAD_STRING = 0x03, 
-    
-    OP_NEGATE = 0x10,      
-    OP_BITNOT = 0x11,      
-    OP_LENGTH = 0x12,
-    OP_COMPLEMENT = 0x13,
-    
-    OP_ADD = 0x20,         
-    OP_SUB = 0x21,         
-    OP_MUL = 0x22,         
-    OP_DIV = 0x23,         
-    OP_MOD = 0x24,
+  OP_LOAD_INT = 0x01,
+  OP_LOAD_REAL = 0x02,
+  OP_LOAD_STRING = 0x03,
 
-    OP_SHR = 0x25,
-    OP_SHL = 0x26,
-    OP_BITAND = 0x27,
-    OP_BITOR = 0x28,
-    OP_BITXOR = 0x29,
+  OP_NEGATE = 0x10,
+  OP_BITNOT = 0x11,
+  OP_LENGTH = 0x12,
+  OP_COMPLEMENT = 0x13,
 
-    OP_DISJ = 0x30,
-    OP_CONJ = 0x31,
+  OP_ADD = 0x20,
+  OP_SUB = 0x21,
+  OP_MUL = 0x22,
+  OP_DIV = 0x23,
+  OP_MOD = 0x24,
 
-    OP_EQ = 0x40,          
-    OP_NE = 0x41,          
-    OP_LT = 0x42,          
-    OP_GT = 0x43,          
-    OP_LE = 0x44,          
-    OP_GE = 0x45,
+  OP_SHR = 0x25,
+  OP_SHL = 0x26,
+  OP_BITAND = 0x27,
+  OP_BITOR = 0x28,
+  OP_BITXOR = 0x29,
 
-    OP_LOAD_VAR = 0x50,    
-    OP_STORE_VAR = 0x51,   
+  OP_DISJ = 0x30,
+  OP_CONJ = 0x31,
 
-    OP_JMP = 0x60,         
-    OP_JMPZ = 0x61,      
-    OP_JMPNZ = 0x62,  
-    
-    OP_CALL = 0x70,
-    OP_TAILCALL = 0x71
-    OP_RETURN = 0x72,      
+  OP_EQ = 0x40,
+  OP_NE = 0x41,
+  OP_LT = 0x42,
+  OP_GT = 0x43,
+  OP_LE = 0x44,
+  OP_GE = 0x45,
 
-    OP_INCR = 0x80,
-    OP_DECR = 0x81,
-    
-    OP_HALT = 0xFF         
+  OP_LOAD_VAR = 0x50,
+  OP_STORE_VAR = 0x51,
+
+  OP_JMP = 0x60,
+  OP_JMPZ = 0x61,
+  OP_JMPNZ = 0x62,
+
+  OP_CALL = 0x70,
+  OP_TAILCALL = 0x71,
+  OP_RETURN = 0x72,
+
+  OP_INCR = 0x80,
+  OP_DECR = 0x81,
+
+  OP_HALT = 0xFF
 } code_t;
-
 
 struct Operand {
   enum OperandType {
