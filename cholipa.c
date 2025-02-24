@@ -314,6 +314,7 @@ struct Closure {
 typedef struct Region {
   size_t size;
   size_t used;
+  struct Region *next;
   char mem[];
 } region_t;
 
@@ -438,14 +439,22 @@ void symtable_delete(symtable_t *stab, const char *key) {
 }
 region_t *new_region(size_t size) {
   region_t *reg = calloc(1, size);
-  reg->size = size - (sizeof(size_t) * 2);
+  reg->size = size - ((sizeof(size_t) * 2) + (sizeof(uintptr_t)));
   reg->used = 0;
+  reg->next = NULL;
   return reg;
 }
 
 void *request_memory(region_t *reg, size_t size) {
-  if (reg->size - reg->used < size)
-    RAISE("Memory region exhausted (size: %lu)", reg->size);
+  if (reg->size - reg->used < size) {
+    region_t *follow = new_region(reg->size);
+    region_t *last = reg;
+
+    while (last->next != NULL)
+      last = last->next;
+
+    last->next = reg = follow;
+  }
 
   void *mem = (void *)reg->mem[reg->used];
   reg->used += size + 1;
@@ -453,126 +462,15 @@ void *request_memory(region_t *reg, size_t size) {
   return mem;
 }
 
-void init_stacks(void) {
-  Stack.operands =
-      request_memory(curr_arena, INIT_STACK_SIZE * sizeof(operand_t));
-  Stack.capacity = INIT_STACK_SIZE;
-  Stack.pointer = 0;
-  Stack.frame = 0;
-  memset(&Stack.constants[0], 0, MAX_CONST * sizeof(operand_t));
+void destroy_region_chain(region_t *head) {
+  region_t *last = head;
 
-  Tape.codes = request_memory(curr_arena, INIT_STACK_SIZE * sizeof(code_t));
-  Tape.codes_num = 0;
-  Tape.pointer = 0;
-  Tape.capacity = INIT_STACK_SIZE;
+  while (last) {
+    region_t *tbd = last;
+    last = last->next;
+    free(tbd);
+  }
 }
-
-void grow_operand_stack(void) {
-  size_t new_size = Stack.capacity * 2;
-  operand_t *new_scratch =
-      request_memory(curr_arena, new_size * sizeof(operand_t));
-
-  memmove(new_scratch, Stack.operands, Stack.capacity * sizeof(operand_t));
-  free(Stack.operands);
-
-  Stack.operands = new_scratch;
-  Stack.capacity = new_size;
-}
-
-void grow_tape(void) {
-  size_t new_size = Tape.capacity * 2;
-  code_t *new_scratch = request_memory(curr_arena, new_size * sizeof(code_t));
-
-  memmove(new_scratch, Tape.codes, Tape.capacity * sizeof(code_t));
-  free(Tape.codes);
-
-  Tape.codes = new_scratch;
-  Tape.capacity = new_size;
-}
-
-void push_integer_operand(intmax_t value) {
-  if (Stack.pointer == Stack.capacity - 1)
-    grow_operand_stack();
-
-  Stack.operands[Stack.pointer++] =
-      (operand_t){.type = OPR_Integer, .v_integer = value};
-}
-
-intmax_t pop_integer_operand(void) {
-  if (Stack.operands[Stack.pointer - 1].type != OPR_Integer)
-    RAISE("Wrong value requested from stack", NULL);
-
-  return Stack.operands[--Stack.pointer].v_integer;
-}
-
-void push_real_operand(long double value) {
-  if (Stack.pointer == Stack.capacity - 1)
-    grow_operand_stack();
-
-  Stack.operands[Stack.pointer++] =
-      (operand_t){.type = OPR_Real, .v_real = value};
-}
-
-long double pop_real_operand(void) {
-  if (Stack.operands[Stack.pointer - 1].type != OPR_Real)
-    RAISE("Wrong value requested from stack", NULL);
-
-  return Stack.operands[--Stack.pointer].v_real;
-}
-
-void push_string_operand(const uint8_t *value) {
-  if (Stack.pointer == Stack.capacity - 1)
-    grow_operand_stack();
-
-  Stack.operands[Stack.pointer++] =
-      (operand_t){.type = OPR_String, .v_string = value};
-}
-
-const uint8_t *pop_string_operand(void) {
-  if (Stack.operands[Stack.pointer - 1].type != OPR_String)
-    RAISE("Wrong value requested from stack", NULL);
-
-  return Stack.operands[--Stack.pointer].v_string;
-}
-
-void set_integer_const(intmax_t value, size_t index) {
-  if (index >= MAX_CONST)
-    RAISE("Constant out of range (max %d)", MAX_CONST);
-
-  Stack.constants[index] = (operand_t){.type = OPR_Integer, .v_integer = value};
-}
-
-void set_real_const(long double value, size_t index) {
-  if (index >= MAX_CONST)
-    RAISE("Constant out of range (max %d)", MAX_CONST);
-
-  Stack.constants[index] = (operand_t){.type = OPR_Real, .v_real = value};
-}
-
-void set_string_const(const uint8_t *value, size_t index) {
-  if (index >= MAX_CONST)
-    RAISE("Constant out of range (max %d)", MAX_CONST);
-
-  Stack.constants[index] = (operand_t){.type = OPR_String, .v_string = value};
-}
-
-operand_t *get_const(size_t index) {
-  if (index >= MAX_CONST)
-    RAISE("Constant out of range (max %d)", MAX_CONST);
-
-  return &Stack.constants[index];
-}
-
-void tape_write_code(code_t code) {
-  if (Tape.codes_num + 1 == Tape.capacity)
-    grow_tape();
-
-  Tape.codes[Tape.codes_num++] = code;
-}
-
-code_t tape_read_code(void) { return Tape.codes[++Tape.pointer]; }
-
-void tape_set_head(size_t head) { Tape.pointer = head; }
 
 ast_node_t *ast_create_binaryop(ast_node_t *absyn, enum BinaryOperator operator,
                                 bool is_inplace, ast_node_t *lhs,
