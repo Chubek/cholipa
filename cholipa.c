@@ -19,87 +19,114 @@
 
 typedef struct Operand operand_t;
 typedef struct AST ast_node_t;
+typedef struct Closure closure_t;
+typedef struct Intrin intrin_t;
+typedef struct Environ environ_t;
 typedef uint32_t tag_t;
 
 typedef enum {
-  OP_LOAD_INT = 0x01,
-  OP_LOAD_REAL = 0x02,
-  OP_LOAD_STRING = 0x03,
+  OP_LOAD_INT,
+  OP_LOAD_REAL,
+  OP_LOAD_STRING,
 
-  OP_NEGATE = 0x10,
-  OP_BITNOT = 0x11,
-  OP_LENGTH = 0x12,
-  OP_COMPLEMENT = 0x13,
+  OP_NEGATE,
+  OP_BITNOT,
+  OP_LENGTH,
+  OP_COMPLEMENT,
 
-  OP_ADD = 0x20,
-  OP_SUB = 0x21,
-  OP_MUL = 0x22,
-  OP_DIV = 0x23,
-  OP_MOD = 0x24,
+  OP_ADD,
+  OP_SUB,
+  OP_MUL,
+  OP_DIV,
+  OP_MOD,
+  OP_POW,
 
-  OP_SHR = 0x25,
-  OP_SHL = 0x26,
-  OP_BITAND = 0x27,
-  OP_BITOR = 0x28,
-  OP_BITXOR = 0x29,
+  OP_SHR,
+  OP_SHL,
+  OP_BITAND,
+  OP_BITOR,
+  OP_BITXOR,
 
-  OP_DISJ = 0x30,
-  OP_CONJ = 0x31,
+  OP_DISJ,
+  OP_CONJ,
 
-  OP_EQ = 0x40,
-  OP_NE = 0x41,
-  OP_LT = 0x42,
-  OP_GT = 0x43,
-  OP_LE = 0x44,
-  OP_GE = 0x45,
+  OP_EQ,
+  OP_NE,
+  OP_LT,
+  OP_GT,
+  OP_LE,
+  OP_GE,
 
-  OP_LOAD_VAR = 0x50,
-  OP_STORE_VAR = 0x51,
+  OP_LOAD_VAR,
+  OP_STORE_VAR,
+  OP_DECLARE_VAR,
 
-  OP_JMP = 0x60,
-  OP_JMPZ = 0x61,
-  OP_JMPNZ = 0x62,
+  OP_JMP,
+  OP_JMPZ,
+  OP_JMPNZ,
 
-  OP_CALL = 0x70,
-  OP_TAILCALL = 0x71,
-  OP_RETURN = 0x72,
+  OP_CALL,
+  OP_TAILCALL,
+  OP_RETURN,
 
-  OP_INCR = 0x80,
-  OP_DECR = 0x81,
+  OP_INCR,
+  OP_DECR,
 
-  OP_HALT = 0xFF
+  OP_INTRIN,
+  OP_CLOSE_START,
+  OP_CLOSE_END,
+
+  OP_HALT,
 } code_t;
 
 struct Operand {
   enum OperandType {
-    OP_Integer,
-    OP_Real,
-    OP_String,
+    OPR_Integer,
+    OPR_Real,
+    OPR_String,
+    OPR_Closure,
+    OPR_Intrin,
   } type;
 
   union {
     intmax_t v_integer;
     long double v_real;
     const uint8_t *v_string;
+    closure_t *v_closure;
+    intrin_t *v_intrin;
   };
 
-  ssize_t no_refs;
+  ssize_t num_refs;
 };
 
-static struct {
-  operand_t *operands;
-  operand_t constants[MAX_CONST];
-  size_t capacity;
-  size_t pointer;
-  size_t frame;
-} Stack;
+typedef struct Symbol {
+  const char *name;
+  operand_t *value;
+  syminfo_t *info;
+  struct Symbol *next;
+} symbol_t;
 
-static struct {
-  code_t *codes;
-  size_t codes_num;
-  size_t pointer;
-  size_t capacity;
-} Tape;
+typedef struct Symtable {
+  Symbol **buckets;
+  size_t size;
+  size_t count;
+} symtable_t;
+
+typedef struct Environ {
+  symtable_t *symbols_table;
+  struct Environ *parent;
+} environ_t;
+
+typedef struct Variable {
+  const char *name;
+  operand_t *value;
+} variable_t;
+
+typedef struct Upvalue {
+  Variable *on_stack;
+  bool is_closed;
+  struct Upvalue *next;
+} upval_t;
 
 typedef struct Function {
   const char *name;
@@ -127,6 +154,7 @@ typedef struct BinaryOp {
     BINOP_Mul,
     BINOP_Div,
     BINOP_Mod,
+    BINOP_Pow,
     BINOP_Shr,
     BINOP_Shl,
     BINOP_Disj,
@@ -278,6 +306,11 @@ struct AST {
   const struct AST *prev;
 };
 
+struct Closure {
+  size_t address;
+  environ_t *env;
+};
+
 typedef struct Region {
   size_t size;
   size_t used;
@@ -302,26 +335,23 @@ void *request_memory(region_t *reg, size_t size) {
 }
 
 void init_stacks(void) {
-  Stack.operands = calloc(INIT_STACK_SIZE, sizeof(operand_t));
+  Stack.operands =
+      request_memory(curr_arena, INIT_STACK_SIZE * sizeof(operand_t));
   Stack.capacity = INIT_STACK_SIZE;
   Stack.pointer = 0;
   Stack.frame = 0;
   memset(&Stack.constants[0], 0, MAX_CONST * sizeof(operand_t));
 
-  Tape.codes = calloc(INIT_STACK_SIZE, sizeof(code_t));
+  Tape.codes = request_memory(curr_arena, INIT_STACK_SIZE * sizeof(code_t));
   Tape.codes_num = 0;
   Tape.pointer = 0;
   Tape.capacity = INIT_STACK_SIZE;
 }
 
-void destroy_stacks(void) {
-  free(Tape.codes);
-  free(Stack.operands);
-}
-
 void grow_operand_stack(void) {
   size_t new_size = Stack.capacity * 2;
-  operand_t *new_scratch = calloc(new_size, sizeof(operand_t));
+  operand_t *new_scratch =
+      request_memory(curr_arena, new_size * sizeof(operand_t));
 
   memmove(new_scratch, Stack.operands, Stack.capacity * sizeof(operand_t));
   free(Stack.operands);
@@ -332,7 +362,7 @@ void grow_operand_stack(void) {
 
 void grow_tape(void) {
   size_t new_size = Tape.capacity * 2;
-  code_t *new_scratch = calloc(new_size, sizeof(code_t));
+  code_t *new_scratch = request_memory(curr_arena, new_size * sizeof(code_t));
 
   memmove(new_scratch, Tape.codes, Tape.capacity * sizeof(code_t));
   free(Tape.codes);
@@ -346,11 +376,11 @@ void push_integer_operand(intmax_t value) {
     grow_operand_stack();
 
   Stack.operands[Stack.pointer++] =
-      (operand_t){.type = OP_Integer, .v_integer = value};
+      (operand_t){.type = OPR_Integer, .v_integer = value};
 }
 
 intmax_t pop_integer_operand(void) {
-  if (Stack.operands[Stack.pointer - 1].type != OP_Integer)
+  if (Stack.operands[Stack.pointer - 1].type != OPR_Integer)
     RAISE("Wrong value requested from stack", NULL);
 
   return Stack.operands[--Stack.pointer].v_integer;
@@ -361,11 +391,11 @@ void push_real_operand(long double value) {
     grow_operand_stack();
 
   Stack.operands[Stack.pointer++] =
-      (operand_t){.type = OP_Real, .v_real = value};
+      (operand_t){.type = OPR_Real, .v_real = value};
 }
 
 long double pop_real_operand(void) {
-  if (Stack.operands[Stack.pointer - 1].type != OP_Real)
+  if (Stack.operands[Stack.pointer - 1].type != OPR_Real)
     RAISE("Wrong value requested from stack", NULL);
 
   return Stack.operands[--Stack.pointer].v_real;
@@ -376,11 +406,11 @@ void push_string_operand(const uint8_t *value) {
     grow_operand_stack();
 
   Stack.operands[Stack.pointer++] =
-      (operand_t){.type = OP_String, .v_string = value};
+      (operand_t){.type = OPR_String, .v_string = value};
 }
 
 const uint8_t *pop_string_operand(void) {
-  if (Stack.operands[Stack.pointer - 1].type != OP_String)
+  if (Stack.operands[Stack.pointer - 1].type != OPR_String)
     RAISE("Wrong value requested from stack", NULL);
 
   return Stack.operands[--Stack.pointer].v_string;
@@ -390,21 +420,21 @@ void set_integer_const(intmax_t value, size_t index) {
   if (index >= MAX_CONST)
     RAISE("Constant out of range (max %d)", MAX_CONST);
 
-  Stack.constants[index] = (operand_t){.type = OP_Integer, .v_integer = value};
+  Stack.constants[index] = (operand_t){.type = OPR_Integer, .v_integer = value};
 }
 
 void set_real_const(long double value, size_t index) {
   if (index >= MAX_CONST)
     RAISE("Constant out of range (max %d)", MAX_CONST);
 
-  Stack.constants[index] = (operand_t){.type = OP_Real, .v_real = value};
+  Stack.constants[index] = (operand_t){.type = OPR_Real, .v_real = value};
 }
 
 void set_string_const(const uint8_t *value, size_t index) {
   if (index >= MAX_CONST)
     RAISE("Constant out of range (max %d)", MAX_CONST);
 
-  Stack.constants[index] = (operand_t){.type = OP_String, .v_string = value};
+  Stack.constants[index] = (operand_t){.type = OPR_String, .v_string = value};
 }
 
 operand_t *get_const(size_t index) {
