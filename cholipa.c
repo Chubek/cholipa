@@ -24,7 +24,9 @@ typedef struct AST ast_node_t;
 typedef uint32_t tag_t;
 typedef struct Region region_t;
 
-static region_t *curr_env = NULL;
+void ast_append_leaf();
+
+static region_t *curr_arena = NULL;
 
 typedef enum {
   OP_LOAD_INT,
@@ -130,7 +132,7 @@ struct Operand {
 };
 
 typedef struct Symbol {
-  const byte_buf_t *name;
+  const byte_buf_t *nam;
   operand_t *value;
   struct Symbol *next;
 } symbol_t;
@@ -165,7 +167,7 @@ typedef struct Function {
   size_t num_params;
   ast_node_t *body;
   bool is_closure;
-} function_t, closure_t;
+} function_t;
 
 typedef struct UnaryOp {
   enum UnaryOperator {
@@ -309,12 +311,11 @@ struct AST {
 
   union {
     function_t *v_function;
-    closure_t *v_closure;
     cond_t *v_cond;
     loop_t *v_loop;
     call_t *v_call;
     label_t *v_label;
-    binaryop_t *v_binop;
+    binaryop_t *v_binaryop;
     unaryop_t *v_unrop;
     assign_t *v_assign;
     decl_t *v_decl;
@@ -356,7 +357,6 @@ typedef struct Interp {
   size_t curr_base_ptr;
 
   variable_t *global_roots;
-  heap_t *rtm_memory;
 } interp_t;
 
 struct Region {
@@ -418,11 +418,11 @@ void symtbl_resize_buckets(symtable_t *stab, size_t new_size) {
 
     while (sym) {
       symbol_t *next = stab->next;
-      uint64_t hash = djb2_hash(sym->key);
+      uint64_t hash = djb2_hash(sym->name);
       size_t idx = hash % new_size;
 
       sym->next = new_buckets[idx];
-      new_buckets[idx] = sym;
+      new_buckets[idx] = *sym;
       sym = next;
     }
   }
@@ -431,18 +431,18 @@ void symtbl_resize_buckets(symtable_t *stab, size_t new_size) {
   stab->size = new_size;
 }
 
-void symtbl_set(symtable_t *stab, const byte_buf_t *key, operand_t *value) {
+void symtbl_set(symtable_t *stab, const byte_buf_t *name, operand_t *value) {
   if (stab->count >= stab->size * 0.7) {
     size_t new_size = next_prime(stab->size * 2);
     symtbl_resize_buckets(stab, new_size);
   }
 
-  uint64_t hash = djb2_hash(key);
+  uint64_t hash = djb2_hash(name);
   size_t idx = hash % stab->size;
 
   symbol_t *sym = stab->buckets[idx];
   while (sym) {
-    if (!strcmp(sym->key, key)) {
+    if (!strcmp(sym->name, name)) {
       sym->value = facimilate_memory(value);
       stab->count++;
       return;
@@ -452,13 +452,13 @@ void symtbl_set(symtable_t *stab, const byte_buf_t *key, operand_t *value) {
   }
 }
 
-symbol_t *symtable_get(symtable_t *stab, const byte_buf_t *key) {
-  uint64_t hash = djb2_hash(key);
+symbol_t *symtable_get(symtable_t *stab, const byte_buf_t *name) {
+  uint64_t hash = djb2_hash(name);
   size_t idx = hash % stab->size;
 
   symbol_t *sym = stab->buckets[idx];
   while (sym) {
-    if (!strcmp(sym->key, key))
+    if (!strcmp(sym->name, name))
       return sym;
     sym = sym->next;
   }
@@ -466,14 +466,14 @@ symbol_t *symtable_get(symtable_t *stab, const byte_buf_t *key) {
   return NULL;
 }
 
-void symtable_delete(symtable_t *stab, const byte_buf_t *key) {
-  uint64_t hash = djb2_hash(key);
+void symtable_delete(symtable_t *stab, const byte_buf_t *name) {
+  uint64_t hash = djb2_hash(name);
   size_t idx = hash % stab->size;
 
   symbol_t *prev = NULL;
   symbol_t *sym = stab->buckets[idx];
   while (sym) {
-    if (!strcmp(sym->key, key)) {
+    if (!strcmp(sym->name, name)) {
       if (prev)
         prev->next = sym->next;
       else
@@ -531,18 +531,18 @@ void destroy_region_chain(region_t *head) {
 ast_node_t *ast_create_binaryop(ast_node_t *absyn, enum BinaryOperator operator,
                                 bool is_inplace, ast_node_t *lhs,
                                 ast_node_t *rhs) {
-  ast_node_t *new_binop = request_memory(curr_arena, sizeof(ast_node_t));
+  ast_node_t *new_binaryop = request_memory(curr_arena, sizeof(ast_node_t));i
 
-  new_binop->kind = LEAF_BinaryOp;
-  new_binop->v_binop = request_memory(curr_arena, sizeof(binaryop_t));
-  new_binop->v_binop->operator= operator;
-  new_binop->v_binop->is_inplace = is_inplace;
-  new_binop->v_binop->lhs = lhs;
-  new_binop->v_binop->rhs = rhs;
+  new_binaryop->kind = LEAF_BinaryOp;
+  new_binaryop->v_binaryop = request_memory(curr_arena, sizeof(binaryop_t));
+  new_binaryop->v_binaryop->operator = operator;
+  new_binaryop->v_binaryop->is_inplace = is_inplace;
+  new_binaryop->v_binaryop->lhs = lhs;
+  new_binaryop->v_binaryop->rhs = rhs;
 
-  ast_append_leaf(absyn, new_binop);
+  ast_append_leaf(absyn, new_binaryop);
 
-  return new_binop;
+  return new_binaryop;
 }
 
 ast_node_t *ast_create_relop(ast_node_t *absyn, enum RelOpKind operator,
@@ -693,9 +693,9 @@ ast_node_t *ast_create_declare(ast_node_t *absyn, const byte_buf_t **vars,
   ast_node_t *new_declare = request_memory(curr_arena, sizeof(ast_node_t));
 
   new_declare->kind = LEAF_DeclareVal;
-  new_declare->v_delcl = request_memory(curr_arena, sizeof(decl_t));
-  new_declare->v_delcl->vars = vars;
-  new_declare->v_delcl->num_vars = num_vars;
+  new_declare->v_decl = request_memory(curr_arena, sizeof(decl_t));
+  new_declare->v_decl->vars = vars;
+  new_declare->v_decl->num_vars = num_vars;
 
   ast_append_leaf(absyn, new_declare);
 
@@ -703,16 +703,16 @@ ast_node_t *ast_create_declare(ast_node_t *absyn, const byte_buf_t **vars,
 }
 
 ast_node_t *ast_create_assign(ast_node_t *absyn, const byte_buf_t **rhs,
-                              size_t num_rhs, ast_node_t **lhs,
-                              size_t num_lhs) {
+                              size_t rhs_num, ast_node_t **lhs,
+                              size_t lhs_num) {
   ast_node_t *new_assign = request_memory(curr_arena, sizeof(ast_node_t));
 
   new_assign->kind = LEAF_AssignVal;
   new_assign->v_assign = request_memory(curr_arena, sizeof(assign_t));
-  new_assign->rhs = rhs;
-  new_assign->rhs_num = rhs_num;
-  new_assign->lhs = lhs;
-  new_assign->lhs_num = lhs_num;
+  new_assign->v_assign->rhs = rhs;
+  new_assign->v_assign->rhs_num = rhs_num;
+  new_assign->v_assign->lhs = lhs;
+  new_assign->v_assign->lhs_num = lhs_num;
 
   ast_append_leaf(absyn, new_assign);
 
