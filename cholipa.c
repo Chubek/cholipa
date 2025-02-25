@@ -83,7 +83,35 @@ typedef enum {
   OP_HALT,
 } code_t;
 
-typedef struct Intrin {
+typedef struct CallFrame {
+  size_t return_address;
+  size_t base_pointer;
+  size_t stk_pointer;
+} call_frame_t;
+
+typedef struct Interp {
+  operand_t *stk;
+  size_t stk_size;
+  size_t stk_capacity;
+  size_t stk_pointer;
+
+  code_t *tape;
+  size_t tape_size;
+  size_t tape_capacity;
+  size_t tape_pointer;
+
+  call_frame_t *call_stk;
+  size_t cstk_size;
+  size_t cstk_capacity;
+  size_t cstk_pointer;
+
+  size_t curr_base_ptr;
+
+  variable_t *global_roots;
+  heap_t *rtm_memory;
+} interp_t;
+
+typedef struct Intrin {:
   int s; // PLACEHOLDER TODO
 } intrin_t;
 
@@ -870,12 +898,21 @@ box_t *box_create(const void *data, size_t size) {
   return box;
 }
 
+box_t *grow_box_data(box_t *box, size_t new_size) {
+  void *new_data = request_memory(curr_arena, new_size);
+  memmove(new_data, box->data, box->size);
+  box->data = new_data;
+  box->size = new_size;
+  return box;
+}
+
 void *box_get(const box_t *box) { return box->data; }
 
 void box_set(box_t *box, const void *new_data, size_t new_size) {
-  if (new_size != box->size) {
-    box->data = resize_memory(box->data, box->size, new_size);
-  }
+  if (new_size >= box->size)
+    box = grow_box_data(box, new_size);
 
-  memmove(box->data, new_data, new_size);
+  memmove(&box->data[box->size], new_data,
+          (new_size >= box->size ? new_size - box->size : new_size));
+  box->size = new_size;
 }
