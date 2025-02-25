@@ -89,28 +89,6 @@ typedef struct CallFrame {
   size_t stk_pointer;
 } call_frame_t;
 
-typedef struct Interp {
-  operand_t *stk;
-  size_t stk_size;
-  size_t stk_capacity;
-  size_t stk_pointer;
-
-  code_t *tape;
-  size_t tape_size;
-  size_t tape_capacity;
-  size_t tape_pointer;
-
-  call_frame_t *call_stk;
-  size_t cstk_size;
-  size_t cstk_capacity;
-  size_t cstk_pointer;
-
-  size_t curr_base_ptr;
-
-  variable_t *global_roots;
-  heap_t *rtm_memory;
-} interp_t;
-
 typedef struct Intrin {:
   int s; // PLACEHOLDER TODO
 } intrin_t;
@@ -359,6 +337,28 @@ typedef struct Box {
   size_t size;
 } box_t;
 
+typedef struct Interp {
+  operand_t *stk;
+  size_t stk_size;
+  size_t stk_capacity;
+  size_t stk_pointer;
+
+  code_t *tape;
+  size_t tape_size;
+  size_t tape_capacity;
+  size_t tape_pointer;
+
+  call_frame_t *call_stk;
+  size_t cstk_size;
+  size_t cstk_capacity;
+  size_t cstk_pointer;
+
+  size_t curr_base_ptr;
+
+  variable_t *global_roots;
+  heap_t *rtm_memory;
+} interp_t;
+
 struct Region {
   size_t size;
   size_t used;
@@ -431,8 +431,7 @@ void symtbl_resize_buckets(symtable_t *stab, size_t new_size) {
   stab->size = new_size;
 }
 
-void symtbl_set(symtable_t *stab, const byte_buf_t *key, operand_t *value,
-                syminfo_t *info) {
+void symtbl_set(symtable_t *stab, const byte_buf_t *key, operand_t *value) {
   if (stab->count >= stab->size * 0.7) {
     size_t new_size = next_prime(stab->size * 2);
     symtbl_resize_buckets(stab, new_size);
