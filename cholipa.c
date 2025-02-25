@@ -103,7 +103,7 @@ typedef struct SourceLoc {
 
 typedef struct ByteBuffer {
   uint8_t *bytes;
-  size_t capcity;
+  size_t capacity;
   size_t length;
 } byte_buf_t;
 
@@ -121,18 +121,17 @@ struct Operand {
     intmax_t v_integer;
     long double v_real;
     byte_buf_t *v_string;
-    closure_t *v_closure;
+    function_t *v_closure;
     intrin_t *v_intrin;
     regexp_t *v_regexp;
   };
 
-  src_loc_t *loc_info;
   operand_t *next;
   operand_t *prev;
 };
 
 typedef struct Symbol {
-  const byte_buf_t *nam;
+  const byte_buf_t *name;
   operand_t *value;
   struct Symbol *next;
 } symbol_t;
@@ -316,7 +315,7 @@ struct AST {
     call_t *v_call;
     label_t *v_label;
     binaryop_t *v_binaryop;
-    unaryop_t *v_unrop;
+    unaryop_t *v_unaryop;
     assign_t *v_assign;
     decl_t *v_decl;
     relop_t *v_relop;
@@ -515,6 +514,8 @@ void *request_memory(region_t *reg, size_t size) {
   return mem;
 }
 
+void *duplicate_memory(void *mem, size_t size) { return NULL; }
+
 void destroy_region_chain(region_t *head) {
   if (head == NULL)
     return;
@@ -531,7 +532,7 @@ void destroy_region_chain(region_t *head) {
 ast_node_t *ast_create_binaryop(ast_node_t *absyn, enum BinaryOperator operator,
                                 bool is_inplace, ast_node_t *lhs,
                                 ast_node_t *rhs) {
-  ast_node_t *new_binaryop = request_memory(curr_arena, sizeof(ast_node_t));i
+  ast_node_t *new_binaryop = request_memory(curr_arena, sizeof(ast_node_t));
 
   new_binaryop->kind = LEAF_BinaryOp;
   new_binaryop->v_binaryop = request_memory(curr_arena, sizeof(binaryop_t));
@@ -565,9 +566,9 @@ ast_node_t *ast_create_unaryop(ast_node_t *absyn, enum UnaryOperator operator,
   ast_node_t *new_unop = request_memory(curr_arena, sizeof(ast_node_t));
 
   new_unop->kind = LEAF_UnaryOp;
-  new_unop->v_unrop = request_memory(curr_arena, sizeof(unaryop_t));
-  new_unop->v_unrop->operator= operator;
-  new_unop->v_unrop->operand = operand;
+  new_unop->v_unaryop = request_memory(curr_arena, sizeof(unaryop_t));
+  new_unop->v_unaryop->operator = operator;
+  new_unop->v_unaryop->operand  = operand;
 
   ast_append_leaf(absyn, new_unop);
 
@@ -789,7 +790,7 @@ operand_t *operand_new_string(const byte_buf_t *value) {
   return op;
 }
 
-operand_t *operand_new_closure(closure_t *closure) {
+operand_t *operand_new_closure(function_t *closure) {
   operand_t *op = request_memory(curr_arena, sizeof(operand_t));
   op->type = OPR_Closure;
   op->v_closure = closure;
@@ -854,16 +855,6 @@ byte_buf_t *byte_buf_new(const uint8_t *str, size_t length) {
   return buf;
 }
 
-byte_buf_t *byte_buf_new(const uint8_t *str, size_t length) {
-  byte_buf_t *buf = request_memory(curr_arena, sizeof(byte_buf_t));
-  buf->bytes = request_memory(curr_arena, length * 2);
-  memmove(buf->bytes, str, length);
-  buf->length = length;
-  buf->capacity = to_nearest_power_of_two(length);
-
-  return buf;
-}
-
 byte_buf_t *byte_buf_grow(byte_buf_t *buf, size_t min_growth) {
   if (buf == NULL)
     return NULL;
@@ -872,7 +863,7 @@ byte_buf_t *byte_buf_grow(byte_buf_t *buf, size_t min_growth) {
       to_nearest_power_of_two(buf->capacity + min_growth + BUF_GROWTH_RATE);
   uint8_t *new_buf = request_memory(curr_arena, growth_size);
 
-  memmove(new_buf, buf->bytes, buf->size);
+  memmove(new_buf, buf->bytes, buf->length);
   buf->bytes = new_buf;
   buf->capacity = growth_size;
 
@@ -881,7 +872,7 @@ byte_buf_t *byte_buf_grow(byte_buf_t *buf, size_t min_growth) {
 
 byte_buf_t *byte_buf_concat(byte_buf_t *buf, byte_buf_t *to_cat) {
   if (to_cat->length > buf->capacity - buf->length)
-    buf = byte_buf_grow(to_cat->length);
+    buf = byte_buf_grow(buf,to_cat->length);
 
   memmove(&buf->bytes[buf->length], to_cat->bytes, to_cat->length);
   buf->length += to_cat->length;
